@@ -32,5 +32,12 @@ local x = ['zero', y[1]],
 
 std.assertEqual(x, y) &&
 
+local { a, b } = { a: "de", b: "structure" },
+      { x, y } = { x: 6, y: 7 },
+      c = a + b,
+      w = x * y;
+
+std.assertEqual(c, "destructure") &&
+std.assertEqual(w, 42) &&
 
 true

@@ -151,7 +151,7 @@ class Parser {
      * \returns The last token (the one that matched parameter end).
      */
     Token parseArgs(ArgParams &args, Token::Kind end, const std::string &element_kind,
-                    bool &got_comma)
+                    bool &got_comma, bool allow_aliases = false)
     {
         got_comma = false;
         bool first = true;
@@ -173,7 +173,8 @@ class Parser {
             Fodder eq_fodder;
             if (peek().kind == Token::IDENTIFIER) {
                 Token maybe_eq = doublePeek();
-                if (maybe_eq.kind == Token::OPERATOR && maybe_eq.data == "=") {
+                if (maybe_eq.kind == Token::OPERATOR &&
+                    (maybe_eq.data == "=" || (allow_aliases && maybe_eq.data == ":"))) {
                     id_fodder = peek().fodder;
                     id = alloc->makeIdentifier(peek().data32());
                     eq_fodder = maybe_eq.fodder;
@@ -194,10 +195,11 @@ class Parser {
         } while (true);
     }
 
-    ArgParams parseParams(const std::string &element_kind, bool &got_comma, Fodder &close_fodder)
+    ArgParams parseParams(const std::string &element_kind, bool &got_comma, Fodder &close_fodder,
+        Token::Kind end = Token::PAREN_R, bool allow_aliases = false)
     {
         ArgParams params;
-        Token paren_r = parseArgs(params, Token::PAREN_R, element_kind, got_comma);
+        Token paren_r = parseArgs(params, end, element_kind, got_comma, allow_aliases);
 
         // Check they're all identifiers
         // parseArgs returns f(x) with x as an expression.  Convert it here.
@@ -220,21 +222,32 @@ class Parser {
 
     Token parseBind(Local::Binds &binds)
     {
-        Token var_id = popExpect(Token::IDENTIFIER);
-        auto *id = alloc->makeIdentifier(var_id.data32());
-        for (const auto &bind : binds) {
-            if (bind.var == id)
-                throw StaticError(var_id.location, "Duplicate local var: " + var_id.data);
-        }
+        Token var_id(Token::END_OF_FILE);
+        const Identifier *id;
         bool is_function = false;
+        bool is_destructure = false;
         ArgParams params;
         bool trailing_comma = false;
         Fodder fodder_l, fodder_r;
-        if (peek().kind == Token::PAREN_L) {
-            Token paren_l = pop();
-            fodder_l = paren_l.fodder;
-            params = parseParams("function parameter", trailing_comma, fodder_r);
-            is_function = true;
+        if (peek().kind == Token::BRACE_L) {
+            id = nullptr;
+            Token brace_l = pop();
+            fodder_l = brace_l.fodder;
+            params = parseParams("destructuring parameter", trailing_comma, fodder_r, Token::BRACE_R);
+            is_destructure = true;
+        } else {
+            var_id = popExpect(Token::IDENTIFIER);
+            id = alloc->makeIdentifier(var_id.data32());
+            for (const auto &bind : binds) {
+                if (bind.var == id)
+                    throw StaticError(var_id.location, "Duplicate local var: " + var_id.data);
+            }
+            if (peek().kind == Token::PAREN_L) {
+                Token paren_l = pop();
+                fodder_l = paren_l.fodder;
+                params = parseParams("function parameter", trailing_comma, fodder_r);
+                is_function = true;
+            }
         }
         Token eq = popExpect(Token::OPERATOR, "=");
         AST *body = parse(MAX_PRECEDENCE);
@@ -244,6 +257,7 @@ class Parser {
                            eq.fodder,
                            body,
                            is_function,
+                           is_destructure,
                            fodder_l,
                            params,
                            trailing_comma,
@@ -452,6 +466,7 @@ class Parser {
                                         field_hide,
                                         plus_sugar,
                                         is_method,
+                                        false,
                                         expr1,
                                         id,
                                         params,
@@ -464,22 +479,33 @@ class Parser {
 
                 case Token::LOCAL: {
                     Fodder local_fodder = next.fodder;
-                    Token var_id = popExpect(Token::IDENTIFIER);
-                    auto *id = alloc->makeIdentifier(var_id.data32());
-
-                    if (binds.find(id) != binds.end()) {
-                        throw StaticError(var_id.location, "Duplicate local var: " + var_id.data);
-                    }
-                    bool is_method = false;
-                    bool func_comma = false;
-                    ArgParams params;
                     Fodder paren_l_fodder;
                     Fodder paren_r_fodder;
-                    if (peek().kind == Token::PAREN_L) {
-                        Token paren_l = pop();
-                        paren_l_fodder = paren_l.fodder;
-                        is_method = true;
-                        params = parseParams("function parameter", func_comma, paren_r_fodder);
+                    ArgParams params;
+                    Token var_id(Token::END_OF_FILE);
+                    const Identifier *id = nullptr;
+                    bool is_method = false;
+                    bool is_destructure = false;
+                    bool func_comma = false;
+                    if (peek().kind == Token::BRACE_L) {
+                        id = nullptr;
+                        Token brace_l = pop();
+                        paren_l_fodder = brace_l.fodder;
+                        is_destructure = true;
+                        params = parseParams("destructuring parameter", func_comma, paren_r_fodder, Token::BRACE_R);
+                    } else {
+                        var_id = popExpect(Token::IDENTIFIER);
+                        id = alloc->makeIdentifier(var_id.data32());
+
+                        if (binds.find(id) != binds.end()) {
+                            throw StaticError(var_id.location, "Duplicate local var: " + var_id.data);
+                        }
+                        if (peek().kind == Token::PAREN_L) {
+                            Token paren_l = pop();
+                            paren_l_fodder = paren_l.fodder;
+                            is_method = true;
+                            params = parseParams("function parameter", func_comma, paren_r_fodder);
+                        }
                     }
                     Token eq = popExpect(Token::OPERATOR, "=");
                     AST *body = parse(MAX_PRECEDENCE);
@@ -497,6 +523,7 @@ class Parser {
                                                         paren_l_fodder,
                                                         paren_r_fodder,
                                                         is_method,
+                                                        is_destructure,
                                                         id,
                                                         params,
                                                         func_comma,

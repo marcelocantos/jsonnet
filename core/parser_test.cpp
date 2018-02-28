@@ -72,9 +72,12 @@ TEST(Parser, TestExpressions)
 TEST(Parser, TestLocal)
 {
     testParse(R"(local foo = "bar"; foo)");
+    testParse(R"(local {a, b} = {a:"de", b:"structure"}; a + b)");
     testParse("local foo(bar) = bar; foo(1)");
     testParse(R"({ local foo = "bar", baz: 1})");
     testParse("{ local foo(bar) = bar, baz: foo(1)}");
+    testParse("{ local {x, y} = {x:6, y:7, z:8}, baz: x * y }");
+    testParse("{ local {x, y:z} = {x:6, y:7}, baz: x * z }");
 }
 
 TEST(Parser, TestArray)

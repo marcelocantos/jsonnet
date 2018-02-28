@@ -15,6 +15,7 @@ limitations under the License.
 */
 
 #include <cassert>
+#include <sstream>
 
 #include "ast.h"
 #include "desugarer.h"
@@ -22,6 +23,7 @@ limitations under the License.
 #include "parser.h"
 #include "pass.h"
 #include "string_utils.h"
+#include "formatter.h"
 
 static const Fodder EF;  // Empty fodder.
 
@@ -75,6 +77,20 @@ static constexpr char STD_CODE[] = {
 #include "std.jsonnet.h"
 };
 
+struct IDGen {
+    Allocator *alloc;
+    UString prefix;
+    int tmpid = 0;
+    IDGen(Allocator *alloc, UString prefix)
+        : alloc(alloc), prefix(prefix) {}
+
+    const Identifier *operator()() {
+        UStringStream ss;
+        ss << prefix << ++tmpid;
+        return alloc->makeIdentifier(ss.str());
+    }
+};
+
 /** Desugar Jsonnet expressions to reduce the number of constructs the rest of the implementation
  * needs to understand.
  *
@@ -84,6 +100,7 @@ static constexpr char STD_CODE[] = {
  */
 class Desugarer {
     Allocator *alloc;
+    IDGen genLocalId = idGen(U"$local_");
 
     template <class T, class... Args>
     T *make(Args &&... args)
@@ -99,6 +116,10 @@ class Desugarer {
     const Identifier *id(const UString &s)
     {
         return alloc->makeIdentifier(s);
+    }
+
+    IDGen idGen(UString prefix) {
+        return IDGen(alloc, prefix);
     }
 
     LiteralString *str(const UString &s)
@@ -128,7 +149,7 @@ class Desugarer {
 
     Local::Bind bind(const Identifier *id, AST *body)
     {
-        return Local::Bind(EF, id, EF, body, false, EF, ArgParams{}, false, EF, EF);
+        return Local::Bind(EF, id, EF, body, false, false, EF, ArgParams{}, false, EF, EF);
     }
 
     Local::Binds singleBind(const Identifier *id, AST *body)
@@ -271,10 +292,23 @@ class Desugarer {
         auto copy = fields;
         fields.clear();
         Local::Binds binds;
+        auto genObjectLocalId = idGen(U"$object_local_");
         for (auto &local : copy) {
             if (local.kind != ObjectField::LOCAL)
                 continue;
-            binds.push_back(bind(local.id, local.expr2));
+            if (local.destructureSugar) {
+                auto tmp = genObjectLocalId();
+                binds.push_back(bind(tmp, local.expr2));
+                for (const auto &param : local.params) {
+                    auto index = make<Index>(
+                        E, EF, var(tmp), EF, false,
+                        str(param.id->name), EF,
+                        nullptr, EF,nullptr, EF);
+                    binds.push_back(bind(param.id, index));
+                }
+            } else {
+                binds.push_back(bind(local.id, local.expr2));
+            }
         }
         for (auto &field : copy) {
             if (field.kind == ObjectField::LOCAL)
@@ -342,9 +376,8 @@ class Desugarer {
                     UStringStream ss;
                     ss << U"$outer_super_index" << (counter++);
                     const Identifier *super_var = desugarer->id(ss.str());
-                    AST *index = super_index->index;
                     // Desugaring of expr should already have occurred.
-                    assert(index != nullptr);
+                    assert(super_index->index != nullptr);
                     // Re-use super_index since we're replacing it here.
                     superVars.emplace_back(super_var, super_index);
                     expr = alloc.make<Var>(expr->location, expr->openFodder, super_var);
@@ -700,6 +733,24 @@ class Desugarer {
             }
 
         } else if (auto *ast = dynamic_cast<Local *>(ast_)) {
+            Local::Binds binds;
+            for (const auto &b : ast->binds) {
+                if (b.destructureSugar) {
+                    auto tmp = genLocalId();
+                    binds.push_back(bind(tmp, b.body));
+                    for (const auto &param : b.params) {
+                        auto index = make<Index>(
+                            E, EF, var(tmp), EF, false,
+                            str(param.id->name), EF,
+                            nullptr, EF,nullptr, EF);
+                        binds.push_back(bind(param.id, index));
+                    }
+                } else {
+                    binds.push_back(b);
+                }
+            }
+            ast->binds.swap(binds);
+
             for (auto &bind : ast->binds)
                 desugar(bind.body, obj_level);
             desugar(ast->body, obj_level);
@@ -871,7 +922,7 @@ class Desugarer {
             // Nothing to do.
 
         } else {
-            std::cerr << "INTERNAL ERROR: Unknown AST: " << ast_ << std::endl;
+            std::cerr << "INTERNAL ERROR: Unknown AST 1: " << typeid(ast_).name() << std::endl;
             std::abort();
         }
     }

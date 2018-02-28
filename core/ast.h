@@ -511,19 +511,21 @@ struct Local : public AST {
         Fodder opFodder;
         AST *body;
         bool functionSugar;
+        bool destructureSugar;
         Fodder parenLeftFodder;
         ArgParams params;  // If functionSugar == true
         bool trailingComma;
         Fodder parenRightFodder;
         Fodder closeFodder;
         Bind(const Fodder &var_fodder, const Identifier *var, const Fodder &op_fodder, AST *body,
-             bool function_sugar, const Fodder &paren_left_fodder, const ArgParams &params,
+             bool function_sugar, bool destructure_sugar, const Fodder &paren_left_fodder, const ArgParams &params,
              bool trailing_comma, const Fodder &paren_right_fodder, const Fodder &close_fodder)
             : varFodder(var_fodder),
               var(var),
               opFodder(op_fodder),
               body(body),
               functionSugar(function_sugar),
+              destructureSugar(destructure_sugar),
               parenLeftFodder(paren_left_fodder),
               params(params),
               trailingComma(trailing_comma),
@@ -633,10 +635,11 @@ struct ObjectField {
     };
     enum Kind kind;
     Fodder fodder1, fodder2, fodderL, fodderR;
-    enum Hide hide;    // (ignore if kind != FIELD_something
-    bool superSugar;   // +:  (ignore if kind != FIELD_something)
-    bool methodSugar;  // f(x, y, z): ...  (ignore if kind  == ASSERT)
-    AST *expr1;        // Not in scope of the object
+    enum Hide hide;         // (ignore if kind != FIELD_something
+    bool superSugar;        // +:  (ignore if kind != FIELD_something)
+    bool methodSugar;       // f(x, y, z): ...  (ignore if kind  == ASSERT)
+    bool destructureSugar;  // f(x, y, z): ...  (ignore if kind  == ASSERT)
+    AST *expr1;             // Not in scope of the object
     const Identifier *id;
     ArgParams params;    // If methodSugar == true then holds the params.
     bool trailingComma;  // If methodSugar == true then remembers the trailing comma.
@@ -646,7 +649,8 @@ struct ObjectField {
 
     ObjectField(enum Kind kind, const Fodder &fodder1, const Fodder &fodder2,
                 const Fodder &fodder_l, const Fodder &fodder_r, enum Hide hide, bool super_sugar,
-                bool method_sugar, AST *expr1, const Identifier *id, const ArgParams &params,
+                bool method_sugar, bool destructure_sugar,
+                AST *expr1, const Identifier *id, const ArgParams &params,
                 bool trailing_comma, const Fodder &op_fodder, AST *expr2, AST *expr3,
                 const Fodder &comma_fodder)
         : kind(kind),
@@ -657,6 +661,7 @@ struct ObjectField {
           hide(hide),
           superSugar(super_sugar),
           methodSugar(method_sugar),
+          destructureSugar(destructure_sugar),
           expr1(expr1),
           id(id),
           params(params),
@@ -671,12 +676,13 @@ struct ObjectField {
         assert(kind != LOCAL || (hide == VISIBLE && !superSugar));
         assert(kind != FIELD_ID || (id != nullptr && expr1 == nullptr));
         assert(kind == FIELD_ID || kind == LOCAL || id == nullptr);
-        assert(methodSugar || (params.size() == 0 && !trailingComma));
+        assert(methodSugar || destructureSugar || (params.size() == 0 && !trailingComma));
         assert(kind == ASSERT || expr3 == nullptr);
     }
     // For when we don't know if it's a function or not.
     static ObjectField Local(const Fodder &fodder1, const Fodder &fodder2, const Fodder &fodder_l,
-                             const Fodder &fodder_r, bool method_sugar, const Identifier *id,
+                             const Fodder &fodder_r, bool method_sugar, bool destructure_sugar,
+                             const Identifier *id,
                              const ArgParams &params, bool trailing_comma, const Fodder &op_fodder,
                              AST *body, const Fodder &comma_fodder)
     {
@@ -688,6 +694,7 @@ struct ObjectField {
                            VISIBLE,
                            false,
                            method_sugar,
+                           destructure_sugar,
                            nullptr,
                            id,
                            params,
@@ -706,6 +713,7 @@ struct ObjectField {
                            Fodder{},
                            Fodder{},
                            VISIBLE,
+                           false,
                            false,
                            false,
                            nullptr,
@@ -731,6 +739,7 @@ struct ObjectField {
                            VISIBLE,
                            false,
                            true,
+                           false,
                            nullptr,
                            id,
                            params,
@@ -749,6 +758,7 @@ struct ObjectField {
                            Fodder{},
                            Fodder{},
                            VISIBLE,
+                           false,
                            false,
                            false,
                            nullptr,

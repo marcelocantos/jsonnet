@@ -174,15 +174,15 @@ class Unparser {
     }
 
     void unparseParams(const Fodder &fodder_l, const ArgParams &params, bool trailing_comma,
-                       const Fodder &fodder_r)
+                       const Fodder &fodder_r, const char* delims, bool pad)
     {
         fill(fodder_l, false, false);
-        o << "(";
+        o << delims[0];
         bool first = true;
         for (const auto &param : params) {
             if (!first)
                 o << ",";
-            fill(param.idFodder, !first, true);
+            fill(param.idFodder, !first || pad, true);
             o << unparse_id(param.id);
             if (param.expr != nullptr) {
                 // default arg, no spacing: x=e
@@ -195,14 +195,15 @@ class Unparser {
         }
         if (trailing_comma)
             o << ",";
-        fill(fodder_r, false, false);
-        o << ")";
+        fill(fodder_r, params.size() > 0, pad);
+        o << delims[1];
     }
 
     void unparseFieldParams(const ObjectField &field)
     {
         if (field.methodSugar) {
-            unparseParams(field.fodderL, field.params, field.trailingComma, field.fodderR);
+            unparseParams(field.fodderL, field.params, field.trailingComma, field.fodderR,
+                "()", false);
         }
     }
 
@@ -218,7 +219,13 @@ class Unparser {
                     fill(field.fodder1, !first || space_before, true);
                     o << "local";
                     fill(field.fodder2, true, true);
-                    o << unparse_id(field.id);
+                    if (field.destructureSugar) {
+                        unparseParams(
+                            field.fodderL, field.params, false, field.fodderR,
+                            "{}", space_before);
+                    } else {
+                        o << unparse_id(field.id);
+                    }
                     unparseFieldParams(field);
                     fill(field.opFodder, true, true);
                     o << "=";
@@ -390,7 +397,8 @@ class Unparser {
         } else if (auto *ast = dynamic_cast<const Function *>(ast_)) {
             o << "function";
             unparseParams(
-                ast->parenLeftFodder, ast->params, ast->trailingComma, ast->parenRightFodder);
+                ast->parenLeftFodder, ast->params, ast->trailingComma,
+                ast->parenRightFodder, "()", false);
             unparse(ast->body, true);
 
         } else if (auto *ast = dynamic_cast<const Import *>(ast_)) {
@@ -447,19 +455,30 @@ class Unparser {
             for (const auto &bind : ast->binds) {
                 if (!first)
                     o << ",";
-                first = false;
-                fill(bind.varFodder, true, true);
-                o << unparse_id(bind.var);
+                if (bind.destructureSugar) {
+                    if (first) {
+                        fill(bind.varFodder, true, true);
+                    }
+                    unparseParams(
+                        bind.parenLeftFodder, bind.params, false, bind.parenRightFodder,
+                        "{}", opts.padObjects);
+                } else {
+                    fill(bind.varFodder, true, true);
+                    o << unparse_id(bind.var);
+                }
                 if (bind.functionSugar) {
                     unparseParams(bind.parenLeftFodder,
                                   bind.params,
                                   bind.trailingComma,
-                                  bind.parenRightFodder);
+                                  bind.parenRightFodder,
+                                  "()",
+                                  false);
                 }
                 fill(bind.opFodder, true, true);
                 o << "=";
                 unparse(bind.body, true);
                 fill(bind.closeFodder, false, false);
+                first = false;
             }
             o << ";";
             unparse(ast->body, true);
@@ -605,7 +624,7 @@ class Unparser {
             o << encode_utf8(ast->id->name);
 
         } else {
-            std::cerr << "INTERNAL ERROR: Unknown AST: " << ast_ << std::endl;
+            std::cerr << "INTERNAL ERROR: Unknown AST: " << typeid(ast_).name() << std::endl;
             std::abort();
         }
     }
@@ -1831,7 +1850,9 @@ class FixIndentation {
                     column++;  // ','
                 first = false;
                 fill(bind.varFodder, true, true, new_indent.lineUp);
-                column += bind.var->name.length();
+                if (bind.var) {
+                    column += bind.var->name.length();
+                }
                 if (bind.functionSugar) {
                     params(bind.parenLeftFodder,
                            bind.params,
@@ -1997,7 +2018,7 @@ class FixIndentation {
             column += ast->id->name.length();
 
         } else {
-            std::cerr << "INTERNAL ERROR: Unknown AST: " << ast_ << std::endl;
+            std::cerr << "INTERNAL ERROR: Unknown AST: " << typeid(ast_).name() << std::endl;
             std::abort();
         }
     }
