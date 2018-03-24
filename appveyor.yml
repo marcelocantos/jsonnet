@@ -1,0 +1,31 @@
+version: 0.10.0.{build}
+
+platform:
+  - x86
+  - x64
+
+configuration:
+  - Debug
+  - Release
+
+branches:
+  only:
+    - appveyor
+
+artifacts:
+  - name: exe
+    path: vs2017\x64\Release\jsonnet.exe
+
+deploy:
+  release: jsonnet-v0.10.0
+  description: 'Jsonnet build'
+  provider: GitHub
+  auth_token:
+    secure: Sz4CTP4sB/AXyT9Nmz2GjJ217A+NmQ1CWfO3jJLZRih9aif2Oq/POKZQ4/RCh8Bh
+  artifact: exe
+  draft: true
+  prerelease: true
+  on:
+    branch: appveyor
+    platform: x64
+    configuration: Release
